@@ -7,28 +7,30 @@ import (
 	"net"
 )
 
-type TunnelConf struct {
-	Config           ssh.ClientConfig
-	RemoteServerAddr string
-	RemoteLicAddr    string
-	LocalServerAddr  string
+// SSHTunnelConfig 用于配置SSH隧道的相关信息
+type SSHTunnelConfig struct {
+	SSHConfig           ssh.ClientConfig // SSH客户端配置
+	SSHServerAddr       string           // SSH服务器地址
+	RemoteListeningAddr string           // 远程服务器的监听地址
+	LocalServiceAddr    string           // 本地服务地址
 }
 
-func (s *TunnelConf) ConnectAndForward() {
-	log.Printf("远程监听地址：%s , 本地服务地址：%s", s.RemoteLicAddr, s.LocalServerAddr)
+// Connect 建立SSH连接并开始监听和转发
+func (s *SSHTunnelConfig) Connect() {
 	// 建立 SSH 连接
-	conn, err := ssh.Dial("tcp", s.RemoteServerAddr, &s.Config)
+	conn, err := ssh.Dial("tcp", s.SSHServerAddr, &s.SSHConfig)
 	if err != nil {
 		log.Fatalf("Failed to dial: %s", err)
 	}
 	defer conn.Close()
-	log.Printf("Successfully connected to %s", s.RemoteLicAddr)
+	log.Printf("Successfully connected to %s", s.RemoteListeningAddr)
 	s.listenAndForward(conn)
 }
 
-func (s *TunnelConf) listenAndForward(conn *ssh.Client) {
+// listenAndForward 在远程服务器上监听指定的端口并处理连接
+func (s *SSHTunnelConfig) listenAndForward(conn *ssh.Client) {
 	// 在远程服务器上监听指定的端口
-	listener, err := conn.Listen("tcp", s.RemoteLicAddr)
+	listener, err := conn.Listen("tcp", s.RemoteListeningAddr)
 	if err != nil {
 		log.Fatalf("Failed to listen on remote: %s", err)
 	}
@@ -44,10 +46,11 @@ func (s *TunnelConf) listenAndForward(conn *ssh.Client) {
 	}
 }
 
-func (s *TunnelConf) handleConnection(remoteConn net.Conn) {
+// handleConnection 处理到远程连接的请求并转发到本地服务
+func (s *SSHTunnelConfig) handleConnection(remoteConn net.Conn) {
 	defer remoteConn.Close()
 	// 建立到本地服务的连接
-	localConn, err := net.Dial("tcp", s.LocalServerAddr)
+	localConn, err := net.Dial("tcp", s.LocalServiceAddr)
 	if err != nil {
 		log.Printf("Failed to connect to local service: %s", err)
 		return
