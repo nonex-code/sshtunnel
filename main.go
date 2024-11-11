@@ -1,58 +1,171 @@
 package main
 
 import (
-	"flag"
 	"fmt"
+	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 	"os"
 	"sshtunnel/core"
 	"strings"
 )
 
-func main() {
-	var sshServerAddr string
-	var remoteLicAddr string
-	var localServerAddr string
-	var PemPath string
-	var sshPasswd string
-	flag.StringVar(&sshServerAddr, "s", "", "ssh服务地址：user@host:port")
-	flag.StringVar(&remoteLicAddr, "r", "", "远程服务器监听地址：host:port")
-	flag.StringVar(&localServerAddr, "l", "", "本地服务地址：host:port")
-	flag.StringVar(&PemPath, "i", "", "pem证书路径")
-	flag.StringVar(&sshPasswd, "p", "", "ssh服务密码")
-	flag.Parse()
-	strs := strings.Split(sshServerAddr, "@")
-	user := strs[0]
-	sshAddr := strs[1]
-	if PemPath == "" && sshPasswd == "" {
-		fmt.Println("未指定证书或密码")
+// 初始化root命令
+func init() {
+	rootCmd.AddCommand(tunnelWithKeyCmd)
+	rootCmd.AddCommand(tunnelWithPassCmd)
+
+	// 设置tunnelWithKeyCmd的标志
+	tunnelWithKeyCmd.Flags().StringP("ssh", "s", "", "SSH服务地址：user@host:port")
+	tunnelWithKeyCmd.Flags().StringP("remote", "r", "", "远程服务器监听地址：host:port")
+	tunnelWithKeyCmd.Flags().StringP("local", "l", "", "本地服务地址：host:port")
+	tunnelWithKeyCmd.Flags().StringP("key", "k", "", "密钥路径")
+
+	// 设置tunnelWithPassCmd的标志
+	tunnelWithPassCmd.Flags().StringP("ssh", "s", "", "SSH服务地址：user@host:port")
+	tunnelWithPassCmd.Flags().StringP("remote", "r", "", "远程服务器监听地址：host:port")
+	tunnelWithPassCmd.Flags().StringP("local", "l", "", "本地服务地址：host:port")
+	tunnelWithPassCmd.Flags().StringP("passwd", "p", "", "SSH服务密码")
+}
+
+// 定义root命令
+var rootCmd = &cobra.Command{
+	Use:   "ssh-tunnel",
+	Short: "SSH隧道创建工具",
+	Long:  `ssh-tunnel 是一个用于创建SSH隧道的命令行工具，支持使用密钥或密码进行认证`,
+}
+
+// 使用密钥创建SSH隧道的命令
+var tunnelWithKeyCmd = &cobra.Command{
+	Use:   "tunnel-key",
+	Short: "使用密钥创建SSH隧道",
+	Long:  `使用密钥进行SSH认证并创建隧道`,
+	Run: func(cmd *cobra.Command, args []string) {
+		executeTunnelWithKey(cmd)
+	},
+}
+
+// 使用密码创建SSH隧道的命令
+var tunnelWithPassCmd = &cobra.Command{
+	Use:   "tunnel-pass",
+	Short: "使用密码创建SSH隧道",
+	Long:  `使用SSH密码进行认证并创建隧道`,
+	Run: func(cmd *cobra.Command, args []string) {
+		executeTunnelWithPass(cmd)
+	},
+}
+
+// 执行使用密钥创建隧道的逻辑
+func executeTunnelWithKey(cmd *cobra.Command) {
+	// 获取命令行参数
+	sshAddr, _ := cmd.Flags().GetString("ssh")
+	remoteAddr, _ := cmd.Flags().GetString("remote")
+	localAddr, _ := cmd.Flags().GetString("local")
+	keyPath, _ := cmd.Flags().GetString("key")
+
+	// 验证输入参数
+	if err := validateKeyInputs(sshAddr, remoteAddr, localAddr, keyPath); err != nil {
+		fmt.Println(err)
 		return
 	}
-	if PemPath != "" || sshPasswd != "" {
-		if PemPath != "" {
-			key, err := os.ReadFile(PemPath)
-			if err != nil {
-				fmt.Printf("秘钥读取失败: %v", err)
-				return
-			}
-			createSSHTunnelWithPEM(user, string(key), sshAddr, remoteLicAddr, localServerAddr)
-		}
-		if sshPasswd != "" {
-			createSSHTunnelWithPassword(user, sshPasswd, sshAddr, remoteLicAddr, localServerAddr)
-		}
 
+	// 解析SSH地址
+	user, addr, err := parseSSHAddress(sshAddr)
+	if err != nil {
+		fmt.Println(err)
+		return
 	}
-	if PemPath != "" && sshPasswd != "" {
-		key, err := os.ReadFile(PemPath)
-		if err != nil {
-			fmt.Printf("秘钥读取失败file: %v", err)
-			return
-		}
-		createSSHTunnelWithPEM(user, string(key), sshAddr, remoteLicAddr, localServerAddr)
+
+	// 读取密钥文件
+	key, err := os.ReadFile(keyPath)
+	if err != nil {
+		fmt.Printf("密钥读取失败: %v\n", err)
+		return
+	}
+
+	// 调用创建SSH隧道的函数
+	fmt.Printf("正在使用密钥创建SSH隧道，用户: %s，SSH地址: %s\n", user, addr)
+	createSSHTunnelWithKey(user, string(key), addr, remoteAddr, localAddr)
+}
+
+// 执行使用密码创建隧道的逻辑
+func executeTunnelWithPass(cmd *cobra.Command) {
+	// 获取命令行参数
+	sshAddr, _ := cmd.Flags().GetString("ssh")
+	remoteAddr, _ := cmd.Flags().GetString("remote")
+	localAddr, _ := cmd.Flags().GetString("local")
+	passwd, _ := cmd.Flags().GetString("passwd")
+
+	// 验证输入参数
+	if err := validatePassInputs(sshAddr, remoteAddr, localAddr, passwd); err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	// 解析SSH地址
+	user, addr, err := parseSSHAddress(sshAddr)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	// 调用创建SSH隧道的函数
+	fmt.Printf("正在使用密码创建SSH隧道，用户: %s，SSH地址: %s\n", user, addr)
+	createSSHTunnelWithPass(user, passwd, addr, remoteAddr, localAddr)
+}
+
+// 解析SSH服务地址 (user@host:port)
+func parseSSHAddress(sshAddr string) (string, string, error) {
+	parts := strings.Split(sshAddr, "@")
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("SSH服务地址格式错误，应为 user@host:port")
+	}
+	return parts[0], parts[1], nil
+}
+
+// 验证使用密钥创建隧道所需的输入参数
+func validateKeyInputs(sshAddr, remoteAddr, localAddr, keyPath string) error {
+	if sshAddr == "" {
+		return fmt.Errorf("未指定SSH服务地址")
+	}
+	if remoteAddr == "" {
+		return fmt.Errorf("未指定远程服务器监听地址")
+	}
+	if localAddr == "" {
+		return fmt.Errorf("未指定本地服务地址")
+	}
+	if keyPath == "" {
+		return fmt.Errorf("未指定密钥路径")
+	}
+	return nil
+}
+
+// 验证使用密码创建隧道所需的输入参数
+func validatePassInputs(sshAddr, remoteAddr, localAddr, passwd string) error {
+	if sshAddr == "" {
+		return fmt.Errorf("未指定SSH服务地址")
+	}
+	if remoteAddr == "" {
+		return fmt.Errorf("未指定远程服务器监听地址")
+	}
+	if localAddr == "" {
+		return fmt.Errorf("未指定本地服务地址")
+	}
+	if passwd == "" {
+		return fmt.Errorf("未指定SSH密码")
+	}
+	return nil
+}
+
+// 主函数，执行root命令
+func main() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
 	}
 }
 
-func createSSHTunnelWithPEM(user string, sshKey string, remoteServerAddr string, remoteLicAddr string, localServerAddr string) {
+// 创建SSH隧道并使用密钥进行认证
+func createSSHTunnelWithKey(user string, sshKey string, SSHServerAddr string, remoteListeningAddr string, localServiceAddr string) {
 	signer, err := ssh.ParsePrivateKey([]byte(sshKey))
 	if err != nil {
 		fmt.Printf("秘钥读取失败key: %v", err)
@@ -65,16 +178,17 @@ func createSSHTunnelWithPEM(user string, sshKey string, remoteServerAddr string,
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // 注意：生产环境中使用安全的 HostKeyCallback
 	}
-	tunnelConf := core.TunnelConf{
-		Config:           config,
-		RemoteServerAddr: remoteServerAddr,
-		RemoteLicAddr:    remoteLicAddr,
-		LocalServerAddr:  localServerAddr,
+	tunnelConf := core.SSHTunnelConfig{
+		SSHConfig:           config,
+		SSHServerAddr:       SSHServerAddr,
+		RemoteListeningAddr: remoteListeningAddr,
+		LocalServiceAddr:    localServiceAddr,
 	}
-	tunnelConf.ConnectAndForward()
+	tunnelConf.Connect()
 }
 
-func createSSHTunnelWithPassword(user string, sshPassword string, remoteServerAddr string, remoteLicAddr string, localServerAddr string) {
+// 创建SSH隧道并使用密码进行认证
+func createSSHTunnelWithPass(user string, sshPassword string, SSHServerAddr string, remoteListeningAddr string, localServiceAddr string) {
 	config := ssh.ClientConfig{
 		User: user,
 		Auth: []ssh.AuthMethod{
@@ -82,11 +196,11 @@ func createSSHTunnelWithPassword(user string, sshPassword string, remoteServerAd
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // 注意：生产环境中使用安全的 HostKeyCallback
 	}
-	tunnelConf := core.TunnelConf{
-		Config:           config,
-		RemoteServerAddr: remoteServerAddr,
-		RemoteLicAddr:    remoteLicAddr,
-		LocalServerAddr:  localServerAddr,
+	tunnelConf := core.SSHTunnelConfig{
+		SSHConfig:           config,
+		SSHServerAddr:       SSHServerAddr,
+		RemoteListeningAddr: remoteListeningAddr,
+		LocalServiceAddr:    localServiceAddr,
 	}
-	tunnelConf.ConnectAndForward()
+	tunnelConf.Connect()
 }
