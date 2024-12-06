@@ -63,7 +63,7 @@ func executeTunnelWithKey(cmd *cobra.Command) {
 	keyPath, _ := cmd.Flags().GetString("key")
 
 	// 验证输入参数
-	if err := validateKeyInputs(sshAddr, remoteAddr, localAddr, keyPath); err != nil {
+	if err := validateInputs(sshAddr, remoteAddr, localAddr, keyPath, ""); err != nil {
 		fmt.Println(err)
 		return
 	}
@@ -84,7 +84,7 @@ func executeTunnelWithKey(cmd *cobra.Command) {
 
 	// 调用创建SSH隧道的函数
 	fmt.Printf("正在使用密钥创建SSH隧道，用户: %s，SSH地址: %s\n", user, addr)
-	createSSHTunnelWithKey(user, string(key), addr, remoteAddr, localAddr)
+	createSSHTunnel(user, string(key), "", addr, remoteAddr, localAddr)
 }
 
 // 执行使用密码创建隧道的逻辑
@@ -96,7 +96,7 @@ func executeTunnelWithPass(cmd *cobra.Command) {
 	passwd, _ := cmd.Flags().GetString("passwd")
 
 	// 验证输入参数
-	if err := validatePassInputs(sshAddr, remoteAddr, localAddr, passwd); err != nil {
+	if err := validateInputs(sshAddr, remoteAddr, localAddr, "", passwd); err != nil {
 		fmt.Println(err)
 		return
 	}
@@ -110,7 +110,7 @@ func executeTunnelWithPass(cmd *cobra.Command) {
 
 	// 调用创建SSH隧道的函数
 	fmt.Printf("正在使用密码创建SSH隧道，用户: %s，SSH地址: %s\n", user, addr)
-	createSSHTunnelWithPass(user, passwd, addr, remoteAddr, localAddr)
+	createSSHTunnel(user, "", passwd, addr, remoteAddr, localAddr)
 }
 
 // 解析SSH服务地址 (user@host:port)
@@ -122,8 +122,8 @@ func parseSSHAddress(sshAddr string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-// 验证使用密钥创建隧道所需的输入参数
-func validateKeyInputs(sshAddr, remoteAddr, localAddr, keyPath string) error {
+// 验证输入参数
+func validateInputs(sshAddr, remoteAddr, localAddr, keyPath, passwd string) error {
 	if sshAddr == "" {
 		return fmt.Errorf("未指定SSH服务地址")
 	}
@@ -133,25 +133,8 @@ func validateKeyInputs(sshAddr, remoteAddr, localAddr, keyPath string) error {
 	if localAddr == "" {
 		return fmt.Errorf("未指定本地服务地址")
 	}
-	if keyPath == "" {
-		return fmt.Errorf("未指定密钥路径")
-	}
-	return nil
-}
-
-// 验证使用密码创建隧道所需的输入参数
-func validatePassInputs(sshAddr, remoteAddr, localAddr, passwd string) error {
-	if sshAddr == "" {
-		return fmt.Errorf("未指定SSH服务地址")
-	}
-	if remoteAddr == "" {
-		return fmt.Errorf("未指定远程服务器监听地址")
-	}
-	if localAddr == "" {
-		return fmt.Errorf("未指定本地服务地址")
-	}
-	if passwd == "" {
-		return fmt.Errorf("未指定SSH密码")
+	if keyPath == "" && passwd == "" {
+		return fmt.Errorf("未指定密钥路径或SSH密码")
 	}
 	return nil
 }
@@ -164,43 +147,35 @@ func main() {
 	}
 }
 
-// 创建SSH隧道并使用密钥进行认证
-func createSSHTunnelWithKey(user string, sshKey string, SSHServerAddr string, remoteListeningAddr string, localServiceAddr string) {
-	signer, err := ssh.ParsePrivateKey([]byte(sshKey))
-	if err != nil {
-		fmt.Printf("秘钥读取失败key: %v", err)
-		return
-	}
-	config := ssh.ClientConfig{
-		User: user,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // 注意：生产环境中使用安全的 HostKeyCallback
-	}
-	tunnelConf := core.SSHTunnelConfig{
-		SSHConfig:           config,
-		SSHServerAddr:       SSHServerAddr,
-		RemoteListeningAddr: remoteListeningAddr,
-		LocalServiceAddr:    localServiceAddr,
-	}
-	tunnelConf.Connect()
-}
+// 创建SSH隧道
+func createSSHTunnel(user, sshKey, sshPassword, sshServerAddr, remoteListenAddr, localServiceAddr string) {
+	var authMethods []ssh.AuthMethod
 
-// 创建SSH隧道并使用密码进行认证
-func createSSHTunnelWithPass(user string, sshPassword string, SSHServerAddr string, remoteListeningAddr string, localServiceAddr string) {
+	if sshKey != "" {
+		signer, err := ssh.ParsePrivateKey([]byte(sshKey))
+		if err != nil {
+			fmt.Printf("密钥读取失败: %v\n", err)
+			return
+		}
+		authMethods = append(authMethods, ssh.PublicKeys(signer))
+	}
+
+	if sshPassword != "" {
+		authMethods = append(authMethods, ssh.Password(sshPassword))
+	}
+
 	config := ssh.ClientConfig{
-		User: user,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(sshPassword),
-		},
+		User:            user,
+		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // 注意：生产环境中使用安全的 HostKeyCallback
 	}
-	tunnelConf := core.SSHTunnelConfig{
-		SSHConfig:           config,
-		SSHServerAddr:       SSHServerAddr,
-		RemoteListeningAddr: remoteListeningAddr,
-		LocalServiceAddr:    localServiceAddr,
+
+	tunnelConfig := core.SSHTunnelConfig{
+		SSHClientConfig:     config,
+		SSHServerAddress:    sshServerAddr,
+		RemoteListenAddress: remoteListenAddr,
+		LocalServiceAddress: localServiceAddr,
 	}
-	tunnelConf.Connect()
+
+	tunnelConfig.ForwardLocalPort()
 }
