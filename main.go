@@ -6,8 +6,15 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 	"os"
+	"runtime"
 	"sshtunnel/core"
 	"strings"
+)
+
+// 定义全局变量
+var (
+	commit = "unknown" // 默认提交 ID
+	branch = "unknown" // 默认分支名称
 )
 
 // 预定义常量
@@ -26,6 +33,15 @@ var rootCmd = &cobra.Command{
 	Long:  `sshtunnel 是一个用于创建SSH隧道的命令行工具，支持使用密钥或密码进行认证`,
 }
 
+// 添加版本信息命令
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "显示版本信息",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("%s-%s %s %s/%s ", branch, commit, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+	},
+}
+
 // 初始化
 func init() {
 	// 添加标志参数
@@ -37,6 +53,8 @@ func init() {
 	// 添加方向标志
 	rootCmd.Flags().BoolP("remote-local", "R", false, "将远程端口转发到本地")
 	rootCmd.Flags().BoolP("local-remote", "L", false, "将本地端口转发到远程")
+	// 添加版本命令
+	rootCmd.AddCommand(versionCmd)
 
 	rootCmd.Run = executePortForwarding
 }
